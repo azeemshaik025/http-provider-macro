@@ -7,16 +7,8 @@ use syn::Error as SynError;
 /// during macro expansion and code generation.
 #[derive(Debug)]
 pub enum MacroError {
-    /// Wraps syntax-related errors from the `syn` crate
     Syn(SynError),
-
-    /// Represents custom errors with a message and location span
-    Custom {
-        /// Error message describing what went wrong
-        message: String,
-        /// Source code location where the error occurred
-        span: Span,
-    },
+    NoEndpointsConfigured { span: Span },
 }
 
 impl MacroError {
@@ -30,23 +22,17 @@ impl MacroError {
     pub fn to_compile_error(self) -> proc_macro2::TokenStream {
         match self {
             MacroError::Syn(err) => err.to_compile_error(),
-            MacroError::Custom { message, span } => SynError::new(span, message).to_compile_error(),
+            MacroError::NoEndpointsConfigured { span } => {
+                SynError::new(span, "at least one endpoint must be defined").to_compile_error()
+            }
         }
     }
 }
 
 impl From<SynError> for MacroError {
-    /// Provides automatic conversion from syn::Error to MacroError.
-    ///
-    /// This implementation allows using the `?` operator with syn::Error results
-    /// in functions that return MacroError.
     fn from(err: SynError) -> Self {
         MacroError::Syn(err)
     }
 }
 
-/// A specialized Result type for macro operations.
-///
-/// This type alias makes it more convenient to work with Results that use MacroError
-/// as their error type.
 pub type MacroResult<T> = std::result::Result<T, MacroError>;

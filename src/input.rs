@@ -24,6 +24,17 @@ pub enum HttpMethod {
     DELETE,
 }
 
+impl HttpMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HttpMethod::GET => "get",
+            HttpMethod::POST => "post",
+            HttpMethod::PUT => "put",
+            HttpMethod::DELETE => "delete",
+        }
+    }
+}
+
 impl Parse for HttpMethod {
     /// Parses an HTTP method from the input stream.
     ///
@@ -70,26 +81,24 @@ pub struct HttpProviderInput {
     pub endpoints: Vec<EndpointDef>,
 }
 
-/// Represents a single API endpoint configuration.
+/// Represents a single API endpoint configuration, ordered by importance.
 ///
-/// Each endpoint definition includes all necessary information to generate
-/// a typed client method for making HTTP requests.
-///
-/// # Fields
+/// The order below reflects the typical essential elements of an API endpoint:
+/// * `method` - The HTTP method to use (required)
+/// * `res` - Response type that will be deserialized (optional, defaults to `()`)
 /// * `path` - Optional URL path for the endpoint (e.g., "/api/users")
-/// * `method` - The HTTP method to use
 /// * `fn_name` - Optional custom name for the generated function
 /// * `req` - Optional request body type
-/// * `res` - Response type that will be deserialized
 /// * `headers` - Optional custom headers type
 /// * `query_params` - Optional query parameters type
 /// * `path_params` - Optional path parameters type
 pub struct EndpointDef {
-    pub path: Option<LitStr>,
     pub method: HttpMethod,
+    pub res: Option<Type>,
+
+    pub path: Option<LitStr>,
     pub fn_name: Option<Ident>,
     pub req: Option<Type>,
-    pub res: Type,
     pub headers: Option<Type>,
     pub query_params: Option<Type>,
     pub path_params: Option<Type>,
@@ -126,7 +135,7 @@ impl Parse for EndpointDef {
     ///     method: GET,
     ///     fn_name: custom_name,      // optional
     ///     req: RequestType,          // optional
-    ///     res: ResponseType,         // required
+    ///     res: ResponseType,         // optional, defaults to () if omitted
     ///     headers: HeadersType,      // optional
     ///     query_params: QueryType,   // optional
     ///     path_params: ParamsType    // optional
@@ -172,7 +181,7 @@ impl Parse for EndpointDef {
             method: method.ok_or_else(|| syn::Error::new(content.span(), "missing `method`"))?,
             fn_name,
             req,
-            res: res.ok_or_else(|| syn::Error::new(content.span(), "missing `res`"))?,
+            res,
             headers,
             query_params,
             path_params,

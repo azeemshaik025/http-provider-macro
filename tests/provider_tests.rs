@@ -1,300 +1,301 @@
 #[cfg(test)]
 mod tests {
-    use garden::api::primitives::{Response, Status};
     use http_provider_macro::http_provider;
     use reqwest::{header::HeaderMap, Url};
     use serde::{Deserialize, Serialize};
     use std::str::FromStr;
     use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
 
-    // Define the provider and its methods using the macro
+    // Define the provider with various endpoint configurations
     http_provider!(
         HttpProvider,
         {
             {
-                path: "/custom-path",
+                path: "/users",
                 method: GET,
-                fn_name: fetch_a,
-                req: MyRequest,
-                res: garden::api::primitives::Response<MyResponse>,
-                headers : reqwest::header::HeaderMap,
-                query_params : MyQueryParams,
+                res: MyResponse,
             },
             {
-                path: "/custom-path",
+                path: "/users/{id}",
+                method: GET,
+                path_params: PathParams,
+                res: MyResponse,
+            },
+            {
+                path: "/search",
+                method: GET,
+                query_params: QueryParams,
+                res: MyResponse,
+            },
+            {
+                path: "/data",
+                method: GET,
+                headers: HeaderMap,
+                res: MyResponse,
+            },
+            {
+                method: GET,
+                res: MyResponse,
+            },
+            {
+                path: "/users",
                 method: POST,
-                fn_name: post_b,
                 req: MyRequest,
-                res: garden::api::primitives::Response<MyResponse>,
-            },
-            {
-                path: "/custom-path",
-                method: PUT,
-                fn_name: put_c,
-                req: MyRequest,
-                res: garden::api::primitives::Response<MyResponse>,
-            },
-            {
-                path: "/custom-path",
-                method: DELETE,
-                fn_name: delete_d,
-                res: garden::api::primitives::Response<MyResponse>,
-            },
-            {
-                path: "/custom-path/{id}",
-                method: GET,
-                fn_name: get_user_by_id,
-                path_params: MyPathParams,
-                res: garden::api::primitives::Response<MyResponse>,
-            },
-            {
-                method: GET,
-                fn_name: get_user,
-                res: garden::api::primitives::Response<MyResponse>,
+                res: MyResponse,
             },
         }
-
     );
 
-    #[derive(Serialize, Deserialize)]
-    struct MyPathParams {
-        id: String,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct MyQueryParams {
-        query: String,
-    }
-
-    // Define the request and response types
-    #[derive(Serialize, Deserialize)]
-    struct MyRequest {
-        query: String,
-    }
-
+    // Test data structures
     #[derive(Serialize, Deserialize, Debug, PartialEq)]
     struct MyResponse {
         value: String,
     }
 
+    #[derive(Serialize, Deserialize)]
+    struct MyRequest {
+        data: String,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct PathParams {
+        id: String,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    struct QueryParams {
+        q: String,
+    }
+
+    fn create_success_response(value: &str) -> MyResponse {
+        MyResponse {
+            value: value.to_string(),
+        }
+    }
+
+    // Basic functionality tests
     #[tokio::test]
-    async fn test_successful_get_response() -> Result<(), Box<dyn std::error::Error>> {
-        use wiremock::matchers::{header, method, query_param};
-
-        // Start the mock server
+    async fn test_get_with_path() -> Result<(), Box<dyn std::error::Error>> {
         let mock_server = MockServer::start().await;
+        let response = create_success_response("users");
 
-        // Define expected response
-        let response = Response::<MyResponse> {
-            status: Status::Ok,
-            result: Some(MyResponse {
-                value: "Hello world".to_string(),
-            }),
-            error: None,
-        };
-
-        // Set up a mock that checks for the query and a custom header
         Mock::given(method("GET"))
-            .and(query_param("query", "Helo")) // check query param
-            .and(header("x-custom-header", "myvalue")) // check header
+            .and(wiremock::matchers::path("/users"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&mock_server)
             .await;
 
-        let url = Url::from_str(&mock_server.uri())?;
-        let provider = HttpProvider::new(url, Some(5000));
+        let provider = HttpProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
+        let result = provider.get_users().await?;
 
-        // Create headers with a custom value
-        let mut headers = HeaderMap::new();
-        headers.insert("x-custom-header", "myvalue".parse()?);
+        assert_eq!(result.value, "users");
+        Ok(())
+    }
 
-        // Call the GET method
+    #[tokio::test]
+    async fn test_get_with_path_params() -> Result<(), Box<dyn std::error::Error>> {
+        let mock_server = MockServer::start().await;
+        let response = create_success_response("user-123");
+
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex(r"^/users/\w+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock_server)
+            .await;
+
+        let provider = HttpProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
         let result = provider
-            .fetch_a(
-                &MyRequest {
-                    query: "Helo".to_string(),
-                },
-                headers,
-                &MyQueryParams {
-                    query: "Helo".to_string(),
-                },
-            )
+            .get_users_by_id(&PathParams {
+                id: "123".to_string(),
+            })
             .await?;
 
-        println!("Result : {:#?}", result);
-
-        // Assert expected response
-        assert_eq!(result.status, Status::Ok);
-        assert_eq!(
-            result.result,
-            Some(MyResponse {
-                value: "Hello world".to_string()
-            })
-        );
-
+        assert_eq!(result.value, "user-123");
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_path_param_get_user_by_id() -> Result<(), Box<dyn std::error::Error>> {
-        use wiremock::matchers::{method, path_regex};
-
-        // Start the mock server
+    async fn test_get_with_query_params() -> Result<(), Box<dyn std::error::Error>> {
         let mock_server = MockServer::start().await;
+        let response = create_success_response("search-result");
 
-        // Define expected response
-        let response = Response::<MyResponse> {
-            status: Status::Ok,
-            result: Some(MyResponse {
-                value: "User42".to_string(),
-            }),
-            error: None,
-        };
-
-        // Set up a mock that matches the dynamic path
         Mock::given(method("GET"))
-            .and(path_regex(r"^/custom-path/\w+$")) // Accepts any /users/{id}
+            .and(wiremock::matchers::path("/search"))
+            .and(wiremock::matchers::query_param("q", "test"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&mock_server)
             .await;
 
-        let url = Url::from_str(&mock_server.uri())?;
-
-        let provider = HttpProvider::new(url, Some(5000));
-
-        // Call the generated GET method with path params
-        let path_params = MyPathParams {
-            id: "42".to_string(),
-        };
-
-        let result = provider.get_user_by_id(&path_params).await?;
-
-        println!("Result : {:#?}", result);
-
-        // Assert expected response
-        assert_eq!(result.status, Status::Ok);
-        assert_eq!(
-            result.result,
-            Some(MyResponse {
-                value: "User42".to_string()
+        let provider = HttpProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
+        let result = provider
+            .get_search(&QueryParams {
+                q: "test".to_string(),
             })
+            .await?;
+
+        assert_eq!(result.value, "search-result");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_with_headers() -> Result<(), Box<dyn std::error::Error>> {
+        let mock_server = MockServer::start().await;
+        let response = create_success_response("with-headers");
+
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path("/data"))
+            .and(wiremock::matchers::header("x-api-key", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock_server)
+            .await;
+
+        let provider = HttpProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "secret".parse()?);
+
+        let result = provider.get_data(headers).await?;
+
+        assert_eq!(result.value, "with-headers");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_without_path() -> Result<(), Box<dyn std::error::Error>> {
+        let mock_server = MockServer::start().await;
+        let response = create_success_response("no-path");
+
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock_server)
+            .await;
+
+        let provider = HttpProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
+        let result = provider.get().await?;
+
+        assert_eq!(result.value, "no-path");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_post_with_body() -> Result<(), Box<dyn std::error::Error>> {
+        let mock_server = MockServer::start().await;
+        let response = create_success_response("created");
+
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::path("/users"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock_server)
+            .await;
+
+        let provider = HttpProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
+        let result = provider
+            .post_users(&MyRequest {
+                data: "test".to_string(),
+            })
+            .await?;
+
+        assert_eq!(result.value, "created");
+        Ok(())
+    }
+
+    // Trait-based mock provider test
+    #[tokio::test]
+    async fn test_trait_mock_provider() -> Result<(), Box<dyn std::error::Error>> {
+        // Simple provider for trait testing
+        http_provider!(
+            SimpleProvider,
+            {
+                {
+                    path: "/items",
+                    method: GET,
+                    res: MyResponse,
+                },
+                {
+                    path: "/items/{id}",
+                    method: GET,
+                    path_params: PathParams,
+                    res: MyResponse,
+                },
+            }
+        );
+
+        struct MockProvider;
+
+        impl SimpleProviderTrait for MockProvider {
+            async fn get_items(&self) -> Result<MyResponse, SimpleProviderError> {
+                Ok(create_success_response("mock-items"))
+            }
+
+            async fn get_items_by_id(
+                &self,
+                _path_params: &PathParams,
+            ) -> Result<MyResponse, SimpleProviderError> {
+                Ok(create_success_response("mock-item-123"))
+            }
+        }
+
+        let mock = MockProvider;
+
+        assert_eq!(mock.get_items().await?.value, "mock-items");
+        assert_eq!(
+            mock.get_items_by_id(&PathParams {
+                id: "123".to_string()
+            })
+            .await?
+            .value,
+            "mock-item-123"
         );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn test_successful_post_response() -> Result<(), Box<dyn std::error::Error>> {
-        // Start the mock server
+    async fn test_optional_response() -> Result<(), Box<dyn std::error::Error>> {
+        // Provider with optional response (no res field)
+        http_provider!(
+            NoResponseProvider,
+            {
+                {
+                    path: "/delete",
+                    method: DELETE,
+                },
+                {
+                    path: "/update",
+                    method: PUT,
+                    req: MyRequest,
+                },
+            }
+        );
+
         let mock_server = MockServer::start().await;
 
-        // Set up a mock response for the POST method
-        let response = garden::api::primitives::Response::<MyResponse> {
-            status: garden::api::primitives::Status::Ok,
-            result: Some(MyResponse {
-                value: "Post success".to_string(),
-            }),
-            error: None,
-        };
-
-        // Define how the mock server should respond to a POST request at /orderbook/b
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        Mock::given(method("DELETE"))
+            .and(wiremock::matchers::path("/delete"))
+            .respond_with(ResponseTemplate::new(204))
             .mount(&mock_server)
             .await;
 
-        // URL to use for the POST request (from the mock server)
-        let url = Url::from_str(&mock_server.uri())?;
-
-        // Instantiate the provider (using the macro-generated OrderbookProvider)
-        let provider = HttpProvider::new(url, Some(5000));
-
-        // Prepare the request body
-        let req = MyRequest {
-            query: "test".to_string(),
-        };
-
-        // Call the POST function using the mock server
-        let result = provider.post_b(&req).await?;
-
-        println!("Result: {:#?}", result);
-
-        // Assert that the response matches the expected value
-        assert_eq!(result.status, garden::api::primitives::Status::Ok);
-        assert_eq!(
-            result.result,
-            Some(MyResponse {
-                value: "Post success".to_string()
-            })
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_successful_put_response() -> Result<(), Box<dyn std::error::Error>> {
-        let mock_server = wiremock::MockServer::start().await;
-
-        let response = garden::api::primitives::Response::<MyResponse> {
-            status: garden::api::primitives::Status::Ok,
-            result: Some(MyResponse {
-                value: "Put success".to_string(),
-            }),
-            error: None,
-        };
-
-        wiremock::Mock::given(wiremock::matchers::method("PUT"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response))
+        Mock::given(method("PUT"))
+            .and(wiremock::matchers::path("/update"))
+            .respond_with(ResponseTemplate::new(204))
             .mount(&mock_server)
             .await;
 
-        let url = reqwest::Url::from_str(&mock_server.uri())?;
-        let provider = HttpProvider::new(url, Some(5000));
+        let provider = NoResponseProvider::new(Url::from_str(&mock_server.uri())?, Some(5000));
 
-        let req = MyRequest {
-            query: "test put".to_string(),
-        };
+        // Test DELETE without response
+        let result: Result<(), _> = provider.delete_delete().await;
+        assert!(result.is_ok());
 
-        let result = provider.put_c(&req).await?;
-        assert_eq!(result.status, garden::api::primitives::Status::Ok);
-        assert_eq!(
-            result.result,
-            Some(MyResponse {
-                value: "Put success".to_string()
+        // Test PUT without response
+        let result: Result<(), _> = provider
+            .put_update(&MyRequest {
+                data: "test".to_string(),
             })
-        );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_successful_delete_response() -> Result<(), Box<dyn std::error::Error>> {
-        let mock_server = wiremock::MockServer::start().await;
-
-        let response = garden::api::primitives::Response::<MyResponse> {
-            status: garden::api::primitives::Status::Ok,
-            result: Some(MyResponse {
-                value: "Delete success".to_string(),
-            }),
-            error: None,
-        };
-
-        wiremock::Mock::given(wiremock::matchers::method("DELETE"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response))
-            .mount(&mock_server)
             .await;
+        assert!(result.is_ok());
 
-        let url = reqwest::Url::from_str(&mock_server.uri())?;
-        let provider = HttpProvider::new(url, Some(5000));
-
-        let result = provider.delete_d().await?;
-
-        assert_eq!(result.status, garden::api::primitives::Status::Ok);
-        assert_eq!(
-            result.result,
-            Some(MyResponse {
-                value: "Delete success".to_string()
-            })
-        );
         Ok(())
     }
 }
